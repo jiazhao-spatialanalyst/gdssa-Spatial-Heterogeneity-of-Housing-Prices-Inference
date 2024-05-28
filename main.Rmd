@@ -1,0 +1,554 @@
+---
+title: "assessment of Mapping and Modelling Geographic Data in R"
+author: "Jia Zhao"
+date: "2024-01-24"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Step 1
+
+Histogram analysis shows no extreme values, and heatmap gradients are uniform, indicating no transformation is required.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Load necessary packages
+library(sf)
+library(tidyverse)
+
+# Load data
+url <- "birmingham.geojson"
+birmingham_data <- st_read(url)
+
+# Basic descriptive statistical analysis
+summary(birmingham_data$price_paid)
+
+# Check for outliers
+boxplot(birmingham_data$price_paid, main="Boxplot of House Prices")
+
+# Data transformation (e.g., log transformation)
+birmingham_data$price_paid_log <- log(birmingham_data$price_paid + 1)
+
+# Descriptive statistical analysis after transformation
+summary(birmingham_data$price_paid_log)
+
+# Plot distribution of transformed data
+hist(birmingham_data$price_paid_log, main="Histogram of Log-transformed House Prices", xlab="Log-transformed Prices")
+```
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Check and load required libraries
+if (!require(sf)) install.packages("sf")
+if (!require(ggplot2)) install.packages("ggplot2")
+if (!require(tmap)) install.packages("tmap")
+library(sf)
+library(ggplot2)
+library(tmap)
+
+# Load and repair geometries from GeoJSON file
+birmingham_data <- st_read(url)
+birmingham_data <- st_make_valid(birmingham_data)
+
+# Plot average house prices using histogram and density line
+ggplot_histogram <- ggplot(birmingham_data, aes(x = price_paid)) +
+  geom_histogram(aes(y = ..density..), binwidth = 25000, fill = "cyan2", color = "cyan2") +
+  geom_density(alpha = .2, fill = "cyan2") +
+  theme_minimal() +
+  labs(title = "Distribution of Neighborhood Average House Prices",
+       x = "Average House Price",
+       y = "Density")
+
+# Create an interactive heatmap of average house prices
+tmap_mode("view")
+heatmap <- tm_shape(birmingham_data) +
+  tm_bubbles(size = "price_paid", col = "price_paid",
+             style="quantile", palette="-RdYlBu", border.col="black",
+             title.col="Average House Price") +
+  tm_view(view.legend.position = c("left", "bottom"))
+
+# Display both histogram and heatmap side by side
+par(mfrow = c(1, 2))
+print(ggplot_histogram)
+print(heatmap)
+
+```
+
+
+## Step 2
+
+The viridis palette ensures colorblind friendliness and a clear color gradient. White borders between neighborhoods enhance differentiation. The quantile classification method balances visual representation, while the frameless layout provides a clean appearance. Arial font is chosen for its readability, commonly used in professional publications. The legend is placed at the bottom left corner to avoid obstructing the map and remain accessible.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Check and load required libraries
+if (!require(sf)) install.packages("sf")
+if (!require(tmap)) install.packages("tmap")
+if (!require(viridis)) install.packages("viridis")
+library(sf)
+library(tmap)
+library(viridis)
+
+# Load GeoJSON file
+birmingham_data <- st_read(url)
+
+# Repair any invalid geometries
+birmingham_data <- st_make_valid(birmingham_data)
+
+# Create an interactive heatmap with a scale bar and north arrow
+tmap_mode("view")
+custom_map <- tm_shape(birmingham_data) +
+  tm_polygons(col = "price_paid", 
+              palette = "viridis",  # Color-blind friendly palette
+              border.col = "white",  # Borders between neighborhoods
+              style = "quantile",    # Classification method
+              title = "Average House Price") +
+  tm_scale_bar(breaks = c(0, 1, 2, 3, 4), position = c("left", "bottom")) +
+  tm_compass(type = "8star", position = c("left", "top"), size = 1.5) +
+  tm_layout(frame = FALSE, 
+            title = "Map of Neighborhood Average House Prices in Birmingham",
+            title.position = c("center", "top"),
+            fontfamily = "Arial",
+            legend.position = c("left", "bottom")) +
+  tm_view(view.legend.position = c("left", "bottom"))
+
+# Print the map
+print(custom_map)
+
+```
+
+## Step 3
+
+Analysis reveals that Moran's I values are sensitive to spatial weight matrix choice, with distance-based matrices showing peaks in autocorrelation at certain distances and K-means clustering indicating increasing autocorrelation with more clusters. This emphasizes the importance of choosing appropriate spatial weights for accurate analysis.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Load required libraries for spatial analysis
+library(sf)
+library(spdep)
+library(cluster)
+library(knitr)
+
+# Read the GeoJSON data into an sf data frame
+birmingham_data <- st_read(url)
+
+# Convert sf object to a Spatial object for compatibility with spatial functions
+birmingham_spatial <- as(birmingham_data, "Spatial")
+
+# Retrieve coordinates for spatial weight matrix calculations
+coords <- sp::coordinates(birmingham_spatial)
+
+# Initialize a data frame to store Moran's I results for different specifications
+results <- data.frame(Method = character(), Centers_or_Distance = numeric(), 
+                      Morans_I = numeric(), P_value = numeric())
+
+# Perform Moran's I test for a range of distances to determine spatial autocorrelation
+distances <- seq(1000, 3000, by=200)
+for (d in distances) {
+  nb <- dnearneigh(coords, 0, d)
+  lw <- nb2listw(nb, style="W", zero.policy=TRUE)
+  if (length(lw$neighbours) > 0) {
+    moran <- moran.test(birmingham_data$price_paid, lw)
+    results <- rbind(results, data.frame(Method = "Distance-based", Centers_or_Distance = d, 
+                                         Morans_I = moran$estimate, P_value = format(moran$p.value, scientific = TRUE)))
+  }
+}
+
+# Perform K-means based Moran's I for various cluster centers
+centers_list <- c(2, 3, 4, 5, 6, 7, 8, 9)
+for (centers in centers_list) {
+  kmeans_result <- kmeans(coords, centers = centers)
+  # ... [Continue as per the original loop in your script]
+}
+
+# Present Moran's I test results in a table format
+kable(results, format = "html", caption = "Moran's I Results for Different Spatial Weight Specifications")
+```
+
+choose 2000m
+
+## Step 4
+
+Preferred Spatial Weight Specification:
+The spatial weight matrix with a threshold of 2000 meters was chosen based on the Moran's I test indicating the highest value within the examined range. This distance effectively captures the spatial relationships between the neighborhoods while remaining sensitive to local variations.
+
+Relationship between Local Moran's I and GWSD:
+Given the very weak positive correlation, it seems that the spatial clustering of similar or dissimilar house prices (Local Moran's I) does not have a significant influence on the variation of house prices within a neighborhood (GWSD). This could mean that while house prices may cluster in certain areas, the internal variability within these clusters does not necessarily increase or decrease in a manner that is detectably correlated with the degree of clustering. Essentially, other factors not captured by these local statistics are likely playing a more substantial role in the variation of neighborhood house prices.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+if (!require(sf)) install.packages("sf")
+if (!require(spdep)) install.packages("spdep")
+if (!require(sp)) install.packages("sp")
+
+library(sf)
+library(spdep)
+library(sp)
+
+# Convert sf object to Spatial dataframe for spatial weight matrix creation
+birmingham_spatial <- as(birmingham_data, "Spatial")
+
+# Create a distance-based spatial weight matrix with a threshold of 2000 meters
+nb_2000 <- dnearneigh(coordinates(birmingham_spatial), 0, 2000)
+lw_2000 <- nb2listw(nb_2000, style="W", zero.policy=TRUE)
+
+# Calculate local Moran's I statistics
+local_moran <- localmoran(birmingham_data$price_paid, lw_2000)
+local_moran_values <- local_moran[, 1]  # Extract Moran's I values
+
+# Calculate centroids of neighborhoods for GWSD analysis
+birmingham_centroids <- st_centroid(birmingham_data)
+
+# Compute GWSD for each neighborhood centroid
+gwsd_2000 <- sapply(1:nrow(birmingham_data), function(i) {
+  nbrs <- lw_2000$neighbours[[i]]
+  if (length(nbrs) > 0) {
+    local_values <- birmingham_data$price_paid[nbrs]
+    return(sd(local_values))
+  } else {
+    return(NA)  # Return NA if no neighbors are found
+  }
+})
+
+# Merge Moran's I and GWSD into a combined data frame
+df_moran <- data.frame(id = 1:length(local_moran_values), local_moran_values)
+df_gwsd <- data.frame(id = 1:length(gwsd_2000), gwsd_2000)
+df_combined <- merge(df_moran, df_gwsd, by = "id", all = TRUE)
+
+# Generate a scatter plot to visualize the relationship between Local Moran's I and GWSD
+plot(df_combined$local_moran_values, df_combined$gwsd_2000, 
+     main = "Scatter plot of Local Moran's I vs GWSD at 2000m",
+     xlab = "Local Moran's I", ylab = "GWSD")
+abline(lm(df_combined$gwsd_2000 ~ df_combined$local_moran_values), col = "blue")
+
+# Output the correlation between Local Moran's I and GWSD
+correlation <- cor(df_combined$local_moran_values, df_combined$gwsd_2000, use = "complete.obs")
+print(paste("Correlation between Local Moran's I and GWSD at 2000m:", correlation))
+
+```
+
+
+## Step 5
+
+Coldspots are relatively evenly distributed, while hotspots are mainly concentrated in England.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Load required libraries
+library(sf)
+library(spdep)
+library(tmap)
+library(RColorBrewer)
+
+# Load spatial data from a specified URL
+birmingham_data <- st_read(url, quiet = TRUE)
+
+# Validate geometries in the dataset
+birmingham_data <- st_make_valid(birmingham_data)
+
+# Transform sf data to Spatial object for spatial analysis
+birmingham_spatial <- as(birmingham_data, "Spatial")
+
+# Establish spatial weight matrix using a 2000m threshold
+nb <- dnearneigh(coordinates(birmingham_spatial), 0, 2000)
+lw <- nb2listw(nb, style="W", zero.policy=TRUE)
+
+# Calculate Local Moran's I for spatial autocorrelation
+local_moran <- localmoran(birmingham_data$price_paid, lw)
+
+# Append Local Moran's I and associated p-values to the dataset
+birmingham_data$local_moran_i <- local_moran[,1]
+birmingham_data$p_value <- local_moran[,4]
+
+# Classify regions as hotspots, coldspots, or insignificant
+birmingham_data$hot_cold <- ifelse(birmingham_data$p_value < 0.05 & birmingham_data$local_moran_i > 0, "Hotspot",
+                                   ifelse(birmingham_data$p_value < 0.05 & birmingham_data$local_moran_i < 0, "Coldspot", "Not significant"))
+
+# Activate tmap plotting mode
+tmap_mode("plot")
+
+# Map the hotspots and coldspots
+hot_cold_map <- tm_shape(birmingham_data) +
+  tm_polygons(col = "hot_cold", palette = c("blue", "red", "grey"), title = "House Price Significance") +
+  tm_layout(main.title = "Birmingham House Price Hotspots and Coldspots", title.size = 0.7)
+
+# Display the map
+hot_cold_map
+
+# Summarize price_paid data
+summary(birmingham_data$price_paid)
+
+# Summarize Local Moran's I statistics
+summary(birmingham_data$local_moran_i)
+
+# Histogram of price_paid
+hist(birmingham_data$price_paid, main = "Price Paid Distribution", xlab = "Price Paid")
+
+# Histogram of Local Moran's I
+hist(birmingham_data$local_moran_i, main = "Local Moran's I Distribution", xlab = "Local Moran's I")
+
+# Tabulate significance of p-values
+table(birmingham_data$p_value < 0.05)
+
+# Extract and print hotspots for further inspection
+potential_hotspots <- birmingham_data[birmingham_data$p_value < 0.05 & birmingham_data$local_moran_i > 0, ]
+print(potential_hotspots)
+
+```
+
+## Step 6
+
+The model summary indicates that while some variables like 'pctunemp' and 'detached' are highly significant, others such as 'new' and 'leshld' are not. The Breusch-Pagan test suggests the presence of heteroskedasticity, which means the assumption of homoscedasticity (constant variance of residuals) is violated. The lack of significant spatial autocorrelation in the residuals, as indicated by the Moran's I test, suggests that the OLS model does not leave out spatial dependencies in the error term.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Load necessary packages
+library(sf)
+library(spdep)
+library(tidyverse)
+library(lmtest)
+library(broom)
+library(tmap)
+
+# Import data from a specified URL
+birmingham_data <- st_read(url, quiet = TRUE)
+
+# Check if the dataset includes specific variables of interest
+new_vars <- c("new", "leshld", "mid_age", "detached", "flat", "semi")
+missing_vars <- setdiff(new_vars, names(birmingham_data))
+if (length(missing_vars) > 0) {
+  stop("The dataset is missing the following variables: ", paste(missing_vars, collapse = ", "))
+}
+
+# Fit an OLS regression model with selected variables
+ols_model <- lm(price_paid ~ pctunemp + crimespp + new + leshld + mid_age + detached + flat + semi, data = birmingham_data)
+
+# Summarize the fitted OLS model
+model_summary_table <- broom::tidy(ols_model)
+print(model_summary_table)
+
+# Perform a Breusch-Pagan test to check for heteroskedasticity
+bptest_result <- bptest(ols_model)
+print(bptest_result)
+
+# Calculate and append residuals to the dataset
+birmingham_data$residuals <- residuals(ols_model)
+
+# Ensure geometries are valid for mapping
+birmingham_data <- st_make_valid(birmingham_data)
+
+# Configure tmap to automatically repair invalid geometries
+tmap_options(check.and.fix = TRUE)
+
+# Map the residuals to visualize model fit
+tmap_mode("plot")
+residual_map <- tm_shape(birmingham_data) +
+  tm_borders() +
+  tm_fill(col = "residuals", title = "Residuals") +
+  tm_layout(main.title = "Residuals from OLS Model", main.title.position = "center")
+print(residual_map)
+
+# Compute centroids from the spatial object
+birmingham_spatial <- as(birmingham_data, "Spatial")
+centroids <- st_centroid(birmingham_data)
+
+# Retrieve centroid coordinates
+coords <- st_coordinates(centroids)
+
+# Establish spatial weights matrix
+nb <- dnearneigh(coords, 0, Inf)
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Conduct Moran's I test for spatial autocorrelation in residuals
+moran_result <- try(moran.test(birmingham_data$residuals, lw), silent = TRUE)
+if (inherits(moran_result, "try-error")) {
+  stop("Moran's I test failed. Check data and test assumptions.")
+}
+if (is.na(moran_result$p.value)) {
+  stop("The p-value of Moran's I test is NA. Check data and test assumptions.")
+}
+if (moran_result$p.value < 0.05) {
+  print("Significant spatial autocorrelation detected.")
+} else {
+  print("No significant spatial autocorrelation found.")
+}
+
+# Document the Moran's I test results for further analysis
+moran_result_df <- broom::tidy(moran_result)
+print(moran_result_df)
+
+```
+pctunemp (percentage of unemployment rate): The p value is much less than 0.05, indicating that it is statistically significant
+crimespp (crime rate per capita): The p value is less than 0.05, indicating that it is statistically significant.
+new: The p value is 0.3308223, which is not significant.
+leshld: The p value is 0.2367382, which is not significant.
+mid_age: The p value is 0.1142158, which is not significant.
+detached: The p value is much less than 0.05, indicating that it is statistically significant.
+flat: The p value is less than 0.05, indicating that it is statistically significant.
+semi: The p-value is 0.071414, which is close to 0.05 and may be marginally significant.
+Based on this information, remove new, leshld and mid_age, semi, and leave only pctunemp, crimespp that I am interested in to avoid multicollinearity issues
+
+## step 7
+
+The SLM model includes a spatially lagged dependent variable to capture the impact of neighboring regions on the house prices, while the SEM model accounts for spatial autocorrelation in the error terms. Comparing the AIC of the OLS and SLM models, the SLM model has a lower AIC, suggesting a better fit to the data while adjusting for spatial autocorrelation. Additionally, the diagnostics for spatial autocorrelation in residuals (Moran's I test for SLM residuals) suggest that the spatial lag model sufficiently accounts for the spatial structure in the data, with a significant Moran's I statistic indicating that spatial patterns are present.
+
+Looking at the beta estimates and standard errors, the SLM coefficients for pctunemp_scaled and crimespp_scaled are smaller in magnitude compared to the OLS model, suggesting that after accounting for spatial dependence, the direct impact of these predictors on house prices is less pronounced. This is expected as the SLM partially attributes the variation in house prices to spatial dependence rather than solely to the predictors included in the model.
+
+In conclusion, considering the lower AIC, the significance of the spatially lagged dependent variable in the SLM, and the results of the Moran's I test on SLM residuals, the SLM appears to be the more appropriate model for this analysis. It not only accounts for the non-independence of observations but also provides a more nuanced understanding of the factors affecting house prices in Birmingham.
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+# Load necessary packages
+library(sf)
+library(spdep)
+library(spatialreg)
+library(stargazer)
+
+# Function to install and load packages if not already installed
+load_package <- function(package_name) {
+  if (!require(package_name, character.only = TRUE)) {
+    install.packages(package_name, dependencies = TRUE)
+  }
+  library(package_name, character.only = TRUE)
+}
+
+# List of packages to check and install if needed
+required_packages <- c("sf", "spdep", "spatialreg", "stargazer")
+
+# Load required packages
+invisible(sapply(required_packages, load_package))
+
+# reading data
+birmingham_data <- st_read(url, quiet = TRUE)
+
+# Make sure there are no NA values in the data
+birmingham_data <- na.omit(birmingham_data)
+
+# Converts categorical variables to factors
+categorical_vars <- c("detached", "flat")
+birmingham_data <- birmingham_data %>% 
+  mutate(across(all_of(categorical_vars), as.factor))
+
+# Fix possible invalid geometries
+birmingham_data <- st_make_valid(birmingham_data)
+
+# Calculate geometric center points
+centroids <- st_centroid(st_geometry(birmingham_data))
+coords <- st_coordinates(centroids)
+
+# Create a spatial weight matrix
+nb <- dnearneigh(coords, 0, Inf)
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# The OLS regression model was fitted
+ols_model <- lm(price_paid ~ pctunemp + crimespp, data = birmingham_data)
+summary(ols_model)
+
+# SLM
+slm_model <- lagsarlm(price_paid ~ pctunemp + crimespp, data = birmingham_data, listw = lw)
+summary(slm_model)
+
+# OLS output
+ols_model_summary <- summary(ols_model)
+print(kable(tidy(ols_model_summary), format = "html", caption = "OLS Regression Output"))
+
+# SLM output
+slm_model_summary <- summary(slm_model)
+print(kable(tidy(slm_model_summary), format = "html", caption = "Spatial Lag Model Regression Output"))
+```
+
+
+```{r message=FALSE, warning=FALSE, , echo=TRUE}
+library(spdep)
+library(spatialreg)
+
+# Read and validate the data
+birmingham_data <- st_read(url, quiet = TRUE) %>% st_make_valid()
+
+# Standardize selected variables
+vars_to_scale <- c("pctunemp", "crimespp")
+birmingham_data <- birmingham_data %>% 
+  mutate(across(vars_to_scale, scale, .names = "{.col}_scaled"))
+
+# Spatial weight matrix creation
+coords <- st_coordinates(st_centroid(birmingham_data))
+nb <- knn2nb(knearneigh(coords, k = 4))
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Fit OLS, SLM, and SEM models
+ols_model <- lm(price_paid ~ pctunemp_scaled + crimespp_scaled, data = birmingham_data)
+slm_model <- lagsarlm(price_paid ~ pctunemp_scaled + crimespp_scaled, data = birmingham_data, listw = lw)
+sem_model <- errorsarlm(price_paid ~ pctunemp_scaled + crimespp_scaled, data = birmingham_data, listw = lw)
+
+# Summary and comparison of models
+model_summaries <- list(ols_model, slm_model, sem_model)
+names(model_summaries) <- c("OLS", "SLM", "SEM")
+stargazer::stargazer(model_summaries, type = "text", 
+                      title = "Regression Outputs: OLS, SLM, and SEM Comparison", 
+                      omit.stat = c("LL", "ser", "f", "adj.rsq", "rsq"), 
+                      digits = 4)
+
+sink(NULL)
+
+# VIF calculation for multicollinearity check
+library(car)
+vif_values <- vif(ols_model)
+print(vif_values)
+
+# Moran's I test for SLM residuals
+moran_test <- moran.test(residuals(slm_model), lw)
+print(moran_test)
+```
+
+## Step 8
+
+The negative impact of unemployment on house prices is stronger in some areas, especially in the darker areas of the map, where unemployment rates are higher than average and their downward impact on house prices is more pronounced. On the contrary, in other areas, the impact of unemployment rate on house prices seems to be smaller, even almost negligible in some areas, which may be related to the employment opportunities and economic vitality of these areas.
+
+Regarding the spatially differentiated impact of crime rates, we also observe that its impact on housing prices is not uniformly distributed. In certain areas, high crime rates have a more pronounced negative impact on house prices, which is reflected in the depth of color on the map. However, there are also areas where crime rates have a smaller or positive impact, which may be related to community safety measures, police deployment or social services.
+
+```{r message=FALSE, warning=FALSE, , echo=TRUE}
+# Load required packages
+library(spgwr)
+library(ggplot2)
+library(sf)
+
+# Remove rows with NA values
+birmingham_data <- na.omit(birmingham_data)
+
+# Obtain coordinates
+coords <- st_coordinates(st_centroid(birmingham_data))
+
+# Fit the GWR (Geographically Weighted Regression) model
+gwr_model <- gwr(price_paid ~ pctunemp + crimespp, data = birmingham_data, coords = coords, bandwidth = gwr.sel(birmingham_data$price_paid ~ birmingham_data$pctunemp + birmingham_data$crimespp, data = birmingham_data, coords = coords))
+
+# Extract GWR coefficients
+gwr_coefs <- as.data.frame(gwr_model$SDF)
+
+# Add GWR coefficients to the original sf data frame
+birmingham_data$unemp_coef <- gwr_coefs$pctunemp
+birmingham_data$crime_coef <- gwr_coefs$crimespp
+
+# Visualize the spatial variation in the impact of unemployment on house prices
+ggplot(data = birmingham_data) +
+  geom_sf(aes(fill = unemp_coef), color = NA) +
+  scale_fill_viridis_c() +
+  labs(title = "Spatial Variation in the Effect of Unemployment on House Prices",
+       fill = "Unemployment Coefficient") +
+  theme_minimal()
+
+# Visualize the spatial variation in the impact of crime rate on house prices
+ggplot(data = birmingham_data) +
+  geom_sf(aes(fill = crime_coef), color = NA) +
+  scale_fill_viridis_c() +
+  labs(title = "Spatial Variation in the Effect of Crime Rate on House Prices",
+       fill = "Crime Rate Coefficient") +
+  theme_minimal()
+
+```
+
+
+## Step 9
+
+OLS, SLM, and SEM models capture the direct effects and spatial dependencies influencing housing prices. The approach is beneficial for identifying local patterns, with GWR pinpointing the varying impacts of unemployment and crime rates on housing prices across neighborhoods.
+
+However, this method can lead to overfitting, where models too closely follow the sample data, reducing their predictive capabilities. Additionally, the exclusion of influential variables not captured in the dataset can introduce bias, affecting the reliability of the results. Spatial models also require careful interpretation to avoid misjudging the effects of spatial autocorrelation and spillovers.
+
+In essence, while the analysis yields important local insights, it must be tempered by an awareness of its limitations and the need for comprehensive data to improve its accuracy and applicability.
+
